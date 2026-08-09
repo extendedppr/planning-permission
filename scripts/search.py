@@ -6,6 +6,7 @@ from planning_permission.planning_permission_db import planning_permission_db
 from planning_permission.cork import cork_db
 from planning_permission.dcc import dcc_db
 from planning_permission.galway import galway_db
+from planning_permission.kildare import kildare_db
 from planning_permission.utils import clean_address_for_comparison
 
 
@@ -38,6 +39,15 @@ DEFAULT_FIELDS = {
         ("description", "description"),
     ),
     "galway": (
+        ("application_number", "application_number"),
+        ("status", "application_status"),
+        ("type", "application_type"),
+        ("decision", "decision"),
+        ("received", "received_date"),
+        ("decision_date", "decision_date"),
+        ("description", "description"),
+    ),
+    "kildare": (
         ("application_number", "application_number"),
         ("status", "application_status"),
         ("type", "application_type"),
@@ -168,6 +178,7 @@ def main():
         ("dublin", dcc_db, "address"),
         ("cork", cork_db, "address"),
         ("galway", galway_db, "address"),
+        ("kildare", kildare_db, "address"),
     ):
         results_dict.extend(
             search_db(

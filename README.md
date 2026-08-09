@@ -2,7 +2,7 @@
 
 Scrape and interact with Irish planning permissions.
 
-Note that so far we only fully cover Dublin, Cork and Galway with partial coverage elsewhere.
+Note that so far we only fully cover Dublin, Cork, Galway and Kildare with partial coverage elsewhere.
 
 # Installation
 

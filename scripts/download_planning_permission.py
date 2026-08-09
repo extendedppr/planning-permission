@@ -1,4 +1,5 @@
 import json
+import string
 import os
 import math
 from time import sleep
@@ -22,6 +23,7 @@ from planning_permission.planning_permission_db import (
 from planning_permission.dcc import DCCObject, dcc_db
 from planning_permission.cork import CorkObject, cork_db
 from planning_permission.galway import GalwayObject, galway_db
+from planning_permission.kildare import KildareObject, kildare_db
 from planning_permission.utils import (
     normalise,
     read_json,
@@ -266,6 +268,8 @@ def save_dcc_application(data):
 
 
 def download_dublin():
+    print("Downloading Dublin")
+
     headers = {
         "Accept": "application/json, text/plain, */*",
         "x-client": "DCC",  # Can we just change this for other cities?
@@ -285,7 +289,6 @@ def download_dublin():
     #        counter = 0
     #    if counter > 70:
     #        print(counter)
-
     # return
 
     for objid in progressbar.progressbar(list(reversed(range(1, 200_000)))):
@@ -360,6 +363,8 @@ def download_base():
 
 
 def download_galway():
+    print("Downloading Galway")
+
     url = "https://services1.arcgis.com/mJI7JYqAOKXPG7Hh/arcgis/rest/services/GCC_PlanningRegisterPts_16/FeatureServer/2/query"
 
     galway_db.recreate()
@@ -431,11 +436,44 @@ def download_galway():
         request_count += 1
 
 
+def download_kildare():
+    print("Downloading Kildare")
+
+    base_url = "https://webgeo.kildarecoco.ie/planningenquiry/Public/GetPlanningFileNameAddressResult?name=&address={letter}&devDesc=&startDate=&endDate="
+
+    kildare_db.drop_data()
+
+    objects = []
+    application_numbers = set()
+    for letter in progressbar.progressbar(list(reversed(string.ascii_lowercase))):
+        url = base_url.format(letter=letter)
+
+        response = get(url)
+
+        for obj_dict in response.json():
+            obj = KildareObject.parse(obj_dict)
+            if obj.application_number not in application_numbers:
+                objects.append(obj)
+                application_numbers.add(obj.application_number)
+
+    batch_size = 500
+    total_batches = math.ceil(len(objects) / batch_size)
+    print(f"Inserting chunks of size {batch_size} to db...")
+
+    with kildare_db.db.atomic():
+        for batch in progressbar.progressbar(
+            chunked(objects, batch_size),
+            max_value=total_batches,
+        ):
+            KildareObject.bulk_create(batch, batch_size=batch_size)
+
+
 def main():
     download_base()
     download_dublin()
     download_cork()
     download_galway()
+    download_kildare()
 
 
 if __name__ == "__main__":
