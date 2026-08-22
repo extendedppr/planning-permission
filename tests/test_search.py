@@ -1,34 +1,17 @@
-import importlib.util
+import json
 import os
-import sys
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
-from pathlib import Path
-from unittest.mock import patch
 
 os.environ.setdefault(
     "PLANNING_PERMISSION_DATA_LOCATION", "/tmp/planning_permission_unittest"
 )
 
 from planning_permission.cork import CorkObject, cork_db
-from planning_permission.dcc import DCCObject, dcc_db
+from planning_permission.dublin import DublinObject, dublin_db
 from planning_permission.galway import GalwayObject, galway_db
-from planning_permission.planning_permission_db import (
-    PlanningPermissionObject,
-    planning_permission_db,
-)
-
-
-def load_search_module():
-    search_path = Path(__file__).resolve().parents[1] / "scripts" / "search.py"
-    spec = importlib.util.spec_from_file_location("search", search_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-search = load_search_module()
+from scripts import search
 
 
 LONG_DESCRIPTION = (
@@ -39,30 +22,17 @@ LONG_DESCRIPTION = (
 
 class SearchTest(unittest.TestCase):
     def setUp(self):
-        planning_permission_db.recreate()
-        dcc_db.recreate()
+        dublin_db.recreate()
         cork_db.recreate()
         galway_db.recreate()
 
     def tearDown(self):
-        planning_permission_db.recreate()
-        dcc_db.recreate()
+        dublin_db.recreate()
         cork_db.recreate()
         galway_db.recreate()
 
     def seed_search_rows(self):
-        PlanningPermissionObject.parse(
-            {
-                "development_address": "13 Grand Canal, Dublin",
-                "planning_authority": "Dublin City Council",
-                "application_number": "G1",
-                "development_description": LONG_DESCRIPTION,
-                "application_status": "Granted",
-                "application_type": "Permission",
-                "decision": "Grant",
-            }
-        ).save()
-        DCCObject.parse(
+        DublinObject.parse(
             {
                 "objid": 1,
                 "address": "13 Grand Canal Street, Dublin",
@@ -77,7 +47,7 @@ class SearchTest(unittest.TestCase):
                 "application_status": "APPLICATION FINALISED",
                 "application_type": "PERMISSION",
                 "decision": "CONDITIONAL",
-                "description": "Cork planning description",
+                "description": LONG_DESCRIPTION,
                 "link_app_details": "https://example.test/cork",
             }
         ).save()
@@ -95,9 +65,8 @@ class SearchTest(unittest.TestCase):
 
     def run_search(self, *args):
         output = StringIO()
-        with patch.object(sys, "argv", ["search", *args]):
-            with redirect_stdout(output):
-                search.main()
+        with redirect_stdout(output):
+            search.main(args)
         return output.getvalue()
 
     def test_default_search_compiles_results_from_all_sources(self):
@@ -105,13 +74,31 @@ class SearchTest(unittest.TestCase):
 
         output = self.run_search("--address-substr-csv", "13,grand canal")
 
-        self.assertIn("general", output)
         self.assertIn("dublin", output)
         self.assertIn("cork", output)
         self.assertIn("galway", output)
-        self.assertIn("G1", output)
         self.assertIn("C1", output)
         self.assertIn("GA1", output)
+        self.assertIn("╒", output)
+
+    def test_json_output_returns_parseable_rows(self):
+        self.seed_search_rows()
+
+        output = self.run_search(
+            "--address-substr-csv",
+            "13,grand canal",
+            "--output",
+            "json",
+        )
+
+        rows = json.loads(output)
+        self.assertEqual(
+            {row["source"] for row in rows},
+            {"dublin", "cork", "galway"},
+        )
+        self.assertIn("C1", {row["application_number"] for row in rows})
+        cork = next(row for row in rows if row["source"] == "cork")
+        self.assertEqual(cork["description"], LONG_DESCRIPTION)
 
     def test_default_search_truncates_long_fields_and_hides_more_info(self):
         self.seed_search_rows()
@@ -157,7 +144,6 @@ class SearchTest(unittest.TestCase):
             "cork,galway",
         )
 
-        self.assertIn("general", output)
         self.assertIn("dublin", output)
         self.assertNotIn("cork", output)
         self.assertNotIn("galway", output)
@@ -174,7 +160,7 @@ class SearchTest(unittest.TestCase):
             "--all",
         )
 
-        self.assertIn("development_description", output)
+        self.assertIn("description", output)
         self.assertIn(LONG_DESCRIPTION, output)
         self.assertNotIn(
             "Build extension with a very long description that ...", output

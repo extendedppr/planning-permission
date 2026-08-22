@@ -2,7 +2,25 @@
 
 Scrape and interact with Irish planning permissions.
 
-Note that so far we only fully cover Dublin, Cork, Galway and Kildare with partial coverage elsewhere.
+The scraper currently supports:
+
+- Dublin
+- Cork
+- Galway
+- Kildare
+- Meath
+- Limerick
+- Tipperary
+- Donegal
+- Wexford
+- Kerry
+- Wicklow
+- Louth
+- Mayo
+- Clare
+- Waterford
+
+Not all have associated dates as we get dates from the national database sometimes which only has data from 2016. There are probably ways to get all dates but will work on that at some other point.
 
 # Installation
 
@@ -14,6 +32,12 @@ poetry install
 
 ```bash
 poetry run download_planning_permission
+```
+
+Download one county by passing its lowercase name from the list above:
+
+```bash
+poetry run download_planning_permission --county dublin
 ```
 
 # Usage

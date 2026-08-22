@@ -1,13 +1,23 @@
-import requests
+import math
 import re
 from datetime import datetime
 from functools import lru_cache
 from math import atan, cos, degrees, isnan, radians, sin, sinh, sqrt, tan
 from collections import defaultdict
+from time import sleep
 
+import progressbar
+import requests
+import backoff
 import ujson
+from peewee import chunked
+from playhouse.migrate import SqliteMigrator, migrate
 
-from planning_permission.settings import PLANNING_PERMISSION_LOCATION
+from planning_permission.settings import (
+    PLANNING_PERMISSION_LOCATION,
+    SLEEP_BETWEEN_REQUESTS,
+    INSERT_BATCH_SIZE,
+)
 from planning_permission.constants import DATA_URL
 
 
@@ -149,7 +159,7 @@ def min_set_cover(addresses, count=2, use_precalculated=True):
     if use_precalculated:
         if count == 2:
             return [
-                "co",
+                # "co",
                 "in",
                 "ar",
                 "ll",
@@ -468,3 +478,259 @@ def normalise(properties, field_map, date_fields=None):
             value = parse_date(value)
         out[new] = value
     return out
+
+
+SEARCH_DEFAULT_FIELDS = (
+    ("application_number", ("application_number",)),
+    ("status", ("application_status", "status")),
+    ("type", ("application_type",)),
+    ("decision", ("decision", "decision_code")),
+    ("received", ("received_date", "registration_date")),
+    ("decision_date", ("decision_date",)),
+    ("description", ("development_description", "description")),
+)
+
+SEARCH_FIELDS_BY_SOURCE = {
+    "dublin": (
+        ("application_number", ("application_reference",)),
+        ("status", ("status_description",)),
+        ("type", ("application_type",)),
+        ("decision", ("decision_text",)),
+        ("received", ("received_date", "registration_date")),
+        ("decision_date", ("decision_date",)),
+        ("description", ("proposal",)),
+    ),
+}
+
+SEARCH_MAX_FIELD_LENGTH = 50
+
+
+def _planning_databases():
+    """Load database instances lazily to avoid circular county imports."""
+    from planning_permission.clare import ClareObject, clare_db
+    from planning_permission.cork import CorkObject, cork_db
+    from planning_permission.donegal import DonegalObject, donegal_db
+    from planning_permission.dublin import DublinObject, dublin_db
+    from planning_permission.galway import GalwayObject, galway_db
+    from planning_permission.kerry import KerryObject, kerry_db
+    from planning_permission.kildare import KildareObject, kildare_db
+    from planning_permission.limerick import LimerickObject, limerick_db
+    from planning_permission.louth import LouthObject, louth_db
+    from planning_permission.mayo import MayoObject, mayo_db
+    from planning_permission.meath import MeathObject, meath_db
+    from planning_permission.tipperary import TipperaryObject, tipperary_db
+    from planning_permission.waterford import WaterfordObject, waterford_db
+    from planning_permission.wexford import WexfordObject, wexford_db
+    from planning_permission.wicklow import WicklowObject, wicklow_db
+
+    return (
+        ("dublin", dublin_db, DublinObject),
+        ("cork", cork_db, CorkObject),
+        ("galway", galway_db, GalwayObject),
+        ("kildare", kildare_db, KildareObject),
+        ("meath", meath_db, MeathObject),
+        ("limerick", limerick_db, LimerickObject),
+        ("tipperary", tipperary_db, TipperaryObject),
+        ("donegal", donegal_db, DonegalObject),
+        ("wexford", wexford_db, WexfordObject),
+        ("kerry", kerry_db, KerryObject),
+        ("wicklow", wicklow_db, WicklowObject),
+        ("louth", louth_db, LouthObject),
+        ("mayo", mayo_db, MayoObject),
+        ("clare", clare_db, ClareObject),
+        ("waterford", waterford_db, WaterfordObject),
+    )
+
+
+def _ensure_search_schema(database, model):
+    """Add model columns missing from databases created by older releases."""
+    table = model._meta.table_name
+    existing = {column.name for column in database.db.get_columns(table)}
+    missing = [
+        field for field in model._meta.sorted_fields if field.name not in existing
+    ]
+    if not missing:
+        return
+
+    migrator = SqliteMigrator(database.db)
+    operations = []
+    for field in missing:
+        compatible_field = field.clone()
+        compatible_field.null = True
+        operations.append(migrator.add_column(table, field.name, compatible_field))
+    migrate(*operations)
+
+
+def _search_terms(values):
+    if not values:
+        return []
+    if isinstance(values, str):
+        values = values.split(",")
+    return [clean_address_for_comparison(value) for value in values if value]
+
+
+def _search_value(value, truncate):
+    if value is None:
+        return ""
+    value = str(value)
+    if truncate and len(value) > SEARCH_MAX_FIELD_LENGTH:
+        return f"{value[:SEARCH_MAX_FIELD_LENGTH]}..."
+    return value
+
+
+def _first_search_value(result, model_fields):
+    for model_field in model_fields:
+        value = getattr(result, model_field, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _search_row(source, result, include_all_features, truncate):
+    if include_all_features:
+        row = {"source": source}
+        for field in result._meta.sorted_fields:
+            row[field.name] = _search_value(getattr(result, field.name), truncate)
+        return row
+
+    row = {
+        "source": source,
+        "address": _search_value(getattr(result, "address", None), truncate),
+    }
+    fields = SEARCH_FIELDS_BY_SOURCE.get(source, SEARCH_DEFAULT_FIELDS)
+    for output_field, model_fields in fields:
+        row[output_field] = _search_value(
+            _first_search_value(result, model_fields), truncate
+        )
+    return row
+
+
+def search(
+    address_substrs=None,
+    exclude_address_substrs=None,
+    *,
+    include_all_features=False,
+    truncate=False,
+    databases=None,
+):
+    included = _search_terms(address_substrs)
+    excluded = _search_terms(exclude_address_substrs)
+    databases = _planning_databases() if databases is None else databases
+
+    rows = []
+    for database_config in databases:
+        source, database, *models = database_config
+        if models:
+            _ensure_search_schema(database, models[0])
+        for result in database.filter(
+            address_substrs=included,
+            exclude_address_substrs=excluded,
+            partial=True,
+        ):
+            rows.append(_search_row(source, result, include_all_features, truncate))
+    return rows
+
+
+@backoff.on_exception(
+    backoff.expo, (requests.exceptions.RequestException,), max_tries=5
+)
+def get(url, headers=None, session=None):
+    sleep(SLEEP_BETWEEN_REQUESTS)
+    client = session or requests
+    response = client.get(url, headers=headers, timeout=60)
+    if response.status_code == 404:
+        return response
+    else:
+        response.raise_for_status()
+    return response
+
+
+@backoff.on_exception(
+    backoff.expo, (requests.exceptions.RequestException,), max_tries=5
+)
+def post(url, data, headers=None, session=None):
+    sleep(SLEEP_BETWEEN_REQUESTS)
+    client = session or requests
+    response = client.post(url, data=data, headers=headers, timeout=60)
+    response.raise_for_status()
+    return response
+
+
+def arcgis_get_count(url, session, where="1=1"):
+    count_response = session.get(
+        url,
+        params={"f": "json", "where": where, "returnCountOnly": "true"},
+        timeout=120,
+    )
+    count_response.raise_for_status()
+    return count_response.json()["count"]
+
+
+def arcgis_get_results(
+    url,
+    session,
+    total,
+    batch_size=2000,
+    skip_sort=False,
+    where="1=1",
+    prefix="",
+):
+    bar = progressbar.ProgressBar(max_value=total, prefix=prefix)
+    bar.start()
+    records = []
+    offset = 0
+    while offset < total:
+        response = session.get(
+            url,
+            params={
+                "f": "json",
+                "where": where,
+                "outFields": "*",
+                "returnGeometry": "false",
+                "resultOffset": offset,
+                "resultRecordCount": batch_size,
+                "orderByFields": "OBJECTID_1 ASC" if not skip_sort else "",
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if "error" in payload:
+            raise RuntimeError(payload["error"])
+        page = [feature["attributes"] for feature in payload.get("features", [])]
+        if not page:
+            break
+        records.extend(page)
+        offset += len(page)
+        bar.update(min(offset, total))
+        if payload.get("exceededTransferLimit") is False:
+            break
+        sleep(SLEEP_BETWEEN_REQUESTS)
+    bar.finish()
+
+    return records
+
+
+def calc_batches(objects):
+    return math.ceil(len(objects) / INSERT_BATCH_SIZE)
+
+
+def write_to_db(db, obj, objects):
+    print(f"About to insert {len(objects)} objects into the database")
+    prefix = f"{obj.__name__.removesuffix('Object')}: "
+    db.recreate()
+    with db.db.atomic():
+        for batch in progressbar.progressbar(
+            chunked(objects, INSERT_BATCH_SIZE),
+            max_value=calc_batches(objects),
+            prefix=prefix,
+        ):
+            obj.bulk_create(batch, batch_size=INSERT_BATCH_SIZE)
+
+
+def arcgis_download(URL, skip_sort=False, where="1=1", prefix=""):
+    session = requests.Session()
+    total = arcgis_get_count(URL, session, where=where)
+    return arcgis_get_results(
+        URL, session, total, skip_sort=skip_sort, where=where, prefix=prefix
+    )

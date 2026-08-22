@@ -1,5 +1,8 @@
+import math
+import string
 from typing import Iterable, List
 
+import progressbar
 from peewee import (
     Model,
     TextField,
@@ -7,12 +10,46 @@ from peewee import (
     CharField,
     SqliteDatabase,
     IntegrityError,
+    chunked,
 )
 
 from planning_permission.settings import KILDARE_DB_LOCATION
-from planning_permission.utils import clean_address_for_comparison
+from planning_permission.utils import clean_address_for_comparison, get
 
 kildare_database = SqliteDatabase(KILDARE_DB_LOCATION)
+
+
+def download_kildare():
+    base_url = "https://webgeo.kildarecoco.ie/planningenquiry/Public/GetPlanningFileNameAddressResult?name=&address={letter}&devDesc=&startDate=&endDate="
+
+    kildare_db.drop_data()
+
+    objects = []
+    application_numbers = set()
+    for letter in progressbar.progressbar(
+        list(reversed(string.ascii_lowercase)), prefix="Kildare: "
+    ):
+        url = base_url.format(letter=letter)
+
+        response = get(url)
+
+        for obj_dict in response.json():
+            obj = KildareObject.parse(obj_dict)
+            if obj.application_number not in application_numbers:
+                objects.append(obj)
+                application_numbers.add(obj.application_number)
+
+    batch_size = 500
+    total_batches = math.ceil(len(objects) / batch_size)
+    print(f"About to insert {len(objects)} objects into the database")
+
+    with kildare_db.db.atomic():
+        for batch in progressbar.progressbar(
+            chunked(objects, batch_size),
+            max_value=total_batches,
+            prefix="Kildare: ",
+        ):
+            KildareObject.bulk_create(batch, batch_size=batch_size)
 
 
 class KildareObject(Model):

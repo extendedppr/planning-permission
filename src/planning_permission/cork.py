@@ -1,5 +1,9 @@
+import time
+import json
 from typing import Iterable, List
 
+import progressbar
+import requests
 from peewee import (
     Model,
     TextField,
@@ -10,8 +14,193 @@ from peewee import (
     IntegrityError,
 )
 
-from planning_permission.settings import CORK_DB_LOCATION
-from planning_permission.utils import clean_address_for_comparison
+from planning_permission.settings import CORK_DB_LOCATION, SLEEP_BETWEEN_REQUESTS
+from planning_permission.utils import clean_address_for_comparison, write_to_db
+
+CORK_CITY_URL = (
+    "https://services-eu1.arcgis.com/f0ZQOHXBIeLonX0V/arcgis/rest/services/"
+    "PlanningPolygon_2_view/FeatureServer/0/query"
+)
+CORK_COUNTY_URL = (
+    "https://services.arcgis.com/NzlPQPKn5QF9v2US/arcgis/rest/services/"
+    "IrishPlanningApplications/FeatureServer/0/query"
+)
+CORK_COUNTY_WHERE = "PlanningAuthority = 'Cork County Council'"
+CORK_CITY_FIRST_YEAR = 1999
+CORK_CITY_LAST_YEAR = 2026
+CORK_CITY_PAGE_SIZE = 1000
+CORK_COUNTY_PAGE_SIZE = 2000
+CORK_REQUEST_TIMEOUT = 60
+CORK_SPATIAL_REFERENCE = 2157
+CORK_CITY_YEAR_FILTERS = (
+    f"FileYear < {CORK_CITY_FIRST_YEAR} OR FileYear IS NULL",
+    *(
+        f"FileYear = {year}"
+        for year in range(CORK_CITY_FIRST_YEAR, CORK_CITY_LAST_YEAR + 1)
+    ),
+)
+
+
+def download_cork():
+    objects = []
+
+    for where in progressbar.progressbar(CORK_CITY_YEAR_FILTERS, prefix="Cork City: "):
+        features = []
+        offset = 0
+        while True:
+            response = requests.get(
+                CORK_CITY_URL,
+                params={
+                    "f": "json",
+                    "where": where,
+                    "returnGeometry": "true",
+                    "spatialRel": "esriSpatialRelIntersects",
+                    "outFields": "*",
+                    "outSR": CORK_SPATIAL_REFERENCE,
+                    "orderByFields": "OBJECTID ASC",
+                    "resultOffset": offset,
+                    "resultRecordCount": CORK_CITY_PAGE_SIZE,
+                },
+                headers={},
+                timeout=CORK_REQUEST_TIMEOUT,
+            )
+            response.raise_for_status()
+            data = response.json()
+            page = data.get("features", [])
+            features.extend(page)
+            offset += len(page)
+            if not page or data.get("exceededTransferLimit") is False:
+                break
+
+        for item in features:
+            attrs = item["attributes"]
+
+            parsed_dict = {
+                "address": attrs.get("ApplicantAddress")
+                or attrs.get("DevelopmentAddress")
+                or "",
+                "objid": attrs.get("OBJECTID"),
+                "planning_authority": attrs.get("PlanningAuthority"),
+                "applicant_name": attrs.get("ApplicantName"),
+                "application_number": attrs.get("PlanningApReference"),
+                "received_date": attrs.get("DateReceiptAp"),
+                "link_app_details": attrs.get("LinkAppDetails"),
+                "link_docs": attrs.get("LinkDocs"),
+                "application_type": attrs.get("ApplicationType"),
+                "description": attrs.get("DevDescription"),
+                "development_address": attrs.get("DevelopmentAddress"),
+                "decision": attrs.get("Decision"),
+                "application_status": attrs.get("ApplicationStatus"),
+                "site_area": attrs.get("SiteArea"),
+                "withdrawn_date": attrs.get("WithdrawnDate"),
+                "decision_due_date": attrs.get("DecisionDueDate"),
+                "decision_date": attrs.get("DecisonDate"),
+                "grant_date": attrs.get("GrantDate"),
+                "expiry_date": attrs.get("ExpiryDate"),
+                "file_year": attrs.get("FileYear"),
+                "appeal_ref_number": attrs.get("AppealRefNumber"),
+                "appeal_submitted_date": attrs.get("DateAppealSubmitted"),
+                "appeal_decision": attrs.get("AppealDecision"),
+                "appeal_decision_date": attrs.get("DateAppealDecision"),
+                "appeal_type": attrs.get("appealType"),
+                "fi_file_number": attrs.get("FIFileNumber"),
+                "fi_request_date": attrs.get("FIRequestDate"),
+                "fi_received_date": attrs.get("FIReceivedDate"),
+                "submission_date": attrs.get("SubmissionDate"),
+                "num_house_dev": attrs.get("NumHouseDev"),
+                "number_floors": attrs.get("NumberFloors"),
+                "number_conditions": attrs.get("NumberConditions"),
+                "link_docs_internal": attrs.get("LinkDocsInternal"),
+                "global_id": attrs.get("GlobalID"),
+                "shape_area": attrs.get("Shape__Area"),
+                "shape_length": attrs.get("Shape__Length"),
+                "geometry": json.dumps(item.get("geometry")),
+            }
+            objects.append(CorkObject.parse(parsed_dict))
+
+    count_response = requests.get(
+        CORK_COUNTY_URL,
+        params={
+            "f": "json",
+            "where": CORK_COUNTY_WHERE,
+            "returnCountOnly": "true",
+        },
+        timeout=CORK_REQUEST_TIMEOUT,
+    )
+    count_response.raise_for_status()
+    county_total = count_response.json()["count"]
+    county_bar = progressbar.ProgressBar(
+        max_value=county_total,
+        prefix="Cork County: ",
+    )
+    county_bar.start()
+
+    offset = 0
+    while True:
+        response = requests.get(
+            CORK_COUNTY_URL,
+            params={
+                "f": "json",
+                "where": CORK_COUNTY_WHERE,
+                "returnGeometry": "false",
+                "outFields": "*",
+                "orderByFields": "OBJECTID ASC",
+                "resultOffset": offset,
+                "resultRecordCount": CORK_COUNTY_PAGE_SIZE,
+            },
+            timeout=CORK_REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        data = response.json()
+        page = data.get("features", [])
+        for item in page:
+            attrs = item["attributes"]
+            applicant_name = " ".join(
+                value.strip()
+                for value in (
+                    attrs.get("ApplicantForename"),
+                    attrs.get("ApplicantSurname"),
+                )
+                if value and value.strip()
+            )
+            objects.append(
+                CorkObject.parse(
+                    {
+                        "address": attrs.get("DevelopmentAddress") or "",
+                        "objid": attrs.get("OBJECTID"),
+                        "planning_authority": attrs.get("PlanningAuthority"),
+                        "applicant_name": applicant_name or None,
+                        "application_number": attrs.get("ApplicationNumber"),
+                        "received_date": attrs.get("ReceivedDate"),
+                        "link_app_details": attrs.get("LinkAppDetails"),
+                        "application_type": attrs.get("ApplicationType"),
+                        "description": attrs.get("DevelopmentDescription"),
+                        "development_address": attrs.get("DevelopmentAddress"),
+                        "decision": attrs.get("Decision"),
+                        "application_status": attrs.get("ApplicationStatus"),
+                        "site_area": attrs.get("AreaofSite"),
+                        "withdrawn_date": attrs.get("WithdrawnDate"),
+                        "decision_due_date": attrs.get("DecisionDueDate"),
+                        "decision_date": attrs.get("DecisionDate"),
+                        "grant_date": attrs.get("GrantDate"),
+                        "expiry_date": attrs.get("ExpiryDate"),
+                        "appeal_ref_number": attrs.get("AppealRefNumber"),
+                        "appeal_submitted_date": attrs.get("AppealSubmittedDate"),
+                        "appeal_decision": attrs.get("AppealDecision"),
+                        "appeal_decision_date": attrs.get("AppealDecisionDate"),
+                        "fi_request_date": attrs.get("FIRequestDate"),
+                        "fi_received_date": attrs.get("FIRecDate"),
+                    }
+                )
+            )
+        offset += len(page)
+        county_bar.update(min(offset, county_total))
+        if not page or data.get("exceededTransferLimit") is False:
+            break
+        time.sleep(SLEEP_BETWEEN_REQUESTS)
+    county_bar.finish()
+
+    write_to_db(cork_db, CorkObject, objects)
 
 
 class CorkObject(Model):

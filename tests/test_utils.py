@@ -1,6 +1,9 @@
 import os
 import unittest
 from datetime import date, datetime
+from types import SimpleNamespace
+
+from peewee import CharField, Model, SqliteDatabase
 
 os.environ.setdefault(
     "PLANNING_PERMISSION_DATA_LOCATION", "/tmp/planning_permission_unittest"
@@ -102,6 +105,65 @@ class UtilsTest(unittest.TestCase):
 
         self.assertEqual(len(result), 2)
         self.assertTrue(set(result).issubset({"ab", "bc", "cd", "de"}))
+
+    def test_search_is_reusable_with_selected_databases(self):
+        application = SimpleNamespace(
+            address="13 Grand Canal Street, Dublin",
+            application_number="1234/24",
+            application_status="Decided",
+            application_type="Permission",
+            decision="Granted",
+            received_date=date(2024, 1, 1),
+            decision_date=date(2024, 2, 1),
+            development_description="Build an extension",
+        )
+
+        class FakeDatabase:
+            def filter(self, **kwargs):
+                self.filter_args = kwargs
+                return [application]
+
+        database = FakeDatabase()
+        results = utils.search(
+            "13, Grand Canal",
+            ["Docklands"],
+            databases=[("cork", database)],
+        )
+
+        self.assertEqual(results[0]["application_number"], "1234/24")
+        self.assertEqual(results[0]["address"], application.address)
+        self.assertEqual(
+            database.filter_args,
+            {
+                "address_substrs": ["13", "grandcanal"],
+                "exclude_address_substrs": ["docklands"],
+                "partial": True,
+            },
+        )
+
+    def test_search_schema_adds_missing_fields(self):
+        test_database = SqliteDatabase(":memory:")
+        test_database.connect()
+        test_database.execute_sql(
+            "CREATE TABLE application (id INTEGER PRIMARY KEY, address TEXT)"
+        )
+        test_database.execute_sql(
+            "INSERT INTO application (address) VALUES ('Main Street')"
+        )
+
+        class Application(Model):
+            address = CharField()
+            received_date = CharField(null=True)
+
+            class Meta:
+                database = test_database
+                table_name = "application"
+
+        database = SimpleNamespace(db=test_database)
+        utils._ensure_search_schema(database, Application)
+
+        self.assertEqual(Application.get().address, "Main Street")
+        self.assertIsNone(Application.get().received_date)
 
 
 if __name__ == "__main__":
