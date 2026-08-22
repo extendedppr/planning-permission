@@ -1,13 +1,10 @@
 [tool.poetry]
 name = "planning permission"
-version = "0.0.2"
+version = "0.0.3"
 description = ""
 authors = ["ExtendedPPR <extendedppr@gmail.com>"]
 readme = "README.md"
-packages = [
-    {include = "planning_permission", from = "src"},
-    {include = "scripts"},
-]
+packages = [{include = "planning_permission", from = "src"}]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.14"
