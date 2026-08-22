@@ -4,7 +4,10 @@ version = "0.0.2"
 description = ""
 authors = ["ExtendedPPR <extendedppr@gmail.com>"]
 readme = "README.md"
-packages = [{include="planning_permission", from="src"}]
+packages = [
+    {include = "planning_permission", from = "src"},
+    {include = "scripts"},
+]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.14"
