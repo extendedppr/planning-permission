@@ -15,6 +15,17 @@ from planning_permission.tipperary import download_tipperary
 from planning_permission.waterford import download_waterford
 from planning_permission.wexford import download_wexford
 from planning_permission.wicklow import download_wicklow
+from planning_permission.kilkenny import download_kilkenny
+from planning_permission.westmeath import download_westmeath
+from planning_permission.laois import download_laois
+from planning_permission.offaly import download_offaly
+from planning_permission.cavan import download_cavan
+from planning_permission.roscommon import download_roscommon
+from planning_permission.sligo import download_sligo
+from planning_permission.monaghan import download_monaghan
+from planning_permission.carlow import download_carlow
+from planning_permission.longford import download_longford
+from planning_permission.leitrim import download_leitrim
 
 COUNTY_FUNC_MAP = {
     "dublin": download_dublin,
@@ -32,6 +43,17 @@ COUNTY_FUNC_MAP = {
     "mayo": download_mayo,
     "clare": download_clare,
     "waterford": download_waterford,
+    "kilkenny": download_kilkenny,
+    "westmeath": download_westmeath,
+    "laois": download_laois,
+    "offaly": download_offaly,
+    "cavan": download_cavan,
+    "roscommon": download_roscommon,
+    "sligo": download_sligo,
+    "monaghan": download_monaghan,
+    "carlow": download_carlow,
+    "longford": download_longford,
+    "leitrim": download_leitrim,
 }
 
 

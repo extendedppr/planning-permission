@@ -522,6 +522,17 @@ def _planning_databases():
     from planning_permission.waterford import WaterfordObject, waterford_db
     from planning_permission.wexford import WexfordObject, wexford_db
     from planning_permission.wicklow import WicklowObject, wicklow_db
+    from planning_permission.carlow import CarlowObject, carlow_db
+    from planning_permission.cavan import CavanObject, cavan_db
+    from planning_permission.kilkenny import KilkennyObject, kilkenny_db
+    from planning_permission.laois import LaoisObject, laois_db
+    from planning_permission.leitrim import LeitrimObject, leitrim_db
+    from planning_permission.longford import LongfordObject, longford_db
+    from planning_permission.monaghan import MonaghanObject, monaghan_db
+    from planning_permission.offaly import OffalyObject, offaly_db
+    from planning_permission.roscommon import RoscommonObject, roscommon_db
+    from planning_permission.sligo import SligoObject, sligo_db
+    from planning_permission.westmeath import WestmeathObject, westmeath_db
 
     return (
         ("dublin", dublin_db, DublinObject),
@@ -539,6 +550,17 @@ def _planning_databases():
         ("mayo", mayo_db, MayoObject),
         ("clare", clare_db, ClareObject),
         ("waterford", waterford_db, WaterfordObject),
+        ("kilkenny", kilkenny_db, KilkennyObject),
+        ("westmeath", westmeath_db, WestmeathObject),
+        ("laois", laois_db, LaoisObject),
+        ("offaly", offaly_db, OffalyObject),
+        ("cavan", cavan_db, CavanObject),
+        ("roscommon", roscommon_db, RoscommonObject),
+        ("sligo", sligo_db, SligoObject),
+        ("monaghan", monaghan_db, MonaghanObject),
+        ("carlow", carlow_db, CarlowObject),
+        ("longford", longford_db, LongfordObject),
+        ("leitrim", leitrim_db, LeitrimObject),
     )
 
 

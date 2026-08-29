@@ -64,6 +64,35 @@ CLARE_DB_LOCATION = os.path.join(CLARE_LOCATION, "db.sqlite")
 WATERFORD_LOCATION = os.path.join(BASE_DATA_LOCATION, "waterford")
 WATERFORD_DB_LOCATION = os.path.join(WATERFORD_LOCATION, "db.sqlite")
 
+NATIONAL_REGISTER_COUNTIES = (
+    "kilkenny",
+    "westmeath",
+    "laois",
+    "offaly",
+    "cavan",
+    "roscommon",
+    "sligo",
+    "monaghan",
+    "carlow",
+    "longford",
+    "leitrim",
+)
+NATIONAL_REGISTER_DB_LOCATIONS = {
+    county: os.path.join(BASE_DATA_LOCATION, county, "db.sqlite")
+    for county in NATIONAL_REGISTER_COUNTIES
+}
+KILKENNY_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["kilkenny"]
+WESTMEATH_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["westmeath"]
+LAOIS_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["laois"]
+OFFALY_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["offaly"]
+CAVAN_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["cavan"]
+ROSCOMMON_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["roscommon"]
+SLIGO_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["sligo"]
+MONAGHAN_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["monaghan"]
+CARLOW_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["carlow"]
+LONGFORD_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["longford"]
+LEITRIM_DB_LOCATION = NATIONAL_REGISTER_DB_LOCATIONS["leitrim"]
+
 os.makedirs(BASE_DATA_LOCATION, exist_ok=True)
 os.makedirs(DUBLIN_LOCATION, exist_ok=True)
 os.makedirs(DUBLIN_SAVES_LOCATION, exist_ok=True)
@@ -81,3 +110,5 @@ os.makedirs(LOUTH_LOCATION, exist_ok=True)
 os.makedirs(MAYO_LOCATION, exist_ok=True)
 os.makedirs(CLARE_LOCATION, exist_ok=True)
 os.makedirs(WATERFORD_LOCATION, exist_ok=True)
+for location in NATIONAL_REGISTER_DB_LOCATIONS.values():
+    os.makedirs(os.path.dirname(location), exist_ok=True)
