@@ -1,6 +1,14 @@
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from typing import Iterable, List
+from urllib.parse import urlparse
 
+import progressbar
+import requests
 from peewee import CharField, IntegerField, Model, SqliteDatabase, TextField
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from planning_permission.settings import WEXFORD_DB_LOCATION
 from planning_permission.utils import (
@@ -16,11 +24,14 @@ WEXFORD_DETAILS_URL = (
     "https://services-eu1.arcgis.com/SEIHigRppeVyVssQ/arcgis/rest/services/"
     "Wexford_Planning_Apps_Point_and_Polygons_View/FeatureServer/0/query"
 )
-WEXFORD_REGISTER_URL = (
-    "https://services.arcgis.com/NzlPQPKn5QF9v2US/arcgis/rest/services/"
-    "IrishPlanningApplications/FeatureServer/0/query"
-)
-WEXFORD_WHERE = "PlanningAuthority = 'Wexford County Council'"
+WEXFORD_DATES_URL = "https://planningapi.agileapplications.ie/api/application/{}/dates"
+WEXFORD_REQUEST_WORKERS = 20
+WEXFORD_API_HEADERS = {
+    "Accept": "application/json",
+    "x-client": "wexford",
+    "x-product": "CITIZENPORTAL",
+    "x-service": "PA",
+}
 
 
 def download_wexford():
@@ -30,17 +41,6 @@ def download_wexford():
         skip_sort=True,
         prefix="Wexford received dates: ",
     )
-    register = arcgis_download(
-        WEXFORD_REGISTER_URL,
-        skip_sort=True,
-        where=WEXFORD_WHERE,
-        prefix="Wexford dates: ",
-    )
-    details_by_number = {
-        str(record.get("ApplicationNumber")).strip().casefold(): record
-        for record in register
-        if record.get("ApplicationNumber") not in (None, "")
-    }
     council_by_number = {
         str(number).strip().casefold(): record
         for record in council_details
@@ -48,16 +48,82 @@ def download_wexford():
         not in (None, "")
     }
     objects = []
-    for record in records:
+    for record, details in get_wexford_dates(records):
         number = record.get("Planning_Number")
-        details = (
-            details_by_number.get(str(number).strip().casefold()) if number else None
-        )
         council = (
             council_by_number.get(str(number).strip().casefold()) if number else None
         )
         objects.append(WexfordObject.parse(record, details, council))
     write_to_db(wexford_db, WexfordObject, objects)
+
+
+def _wexford_application_id(details_url):
+    if not details_url:
+        return None
+    parts = [part for part in urlparse(details_url).path.split("/") if part]
+    if len(parts) >= 2 and parts[-2] == "application-details" and parts[-1].isdigit():
+        return parts[-1]
+    return None
+
+
+def _wexford_date(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, int):
+        return value
+    parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp() * 1000)
+
+
+def _parse_wexford_dates(payload):
+    return {
+        "ReceivedDate": _wexford_date(
+            payload.get("receivedDate") or payload.get("registrationDate")
+        ),
+        "DecisionDate": _wexford_date(payload.get("decisionDate")),
+    }
+
+
+def get_wexford_dates(records):
+    local = threading.local()
+
+    def get_dates(record):
+        application_id = _wexford_application_id(record.get("DirectLink2DMS"))
+        if application_id is None:
+            return None
+        if not hasattr(local, "session"):
+            local.session = requests.Session()
+            local.session.headers.update(WEXFORD_API_HEADERS)
+            local.session.mount(
+                "https://",
+                HTTPAdapter(
+                    max_retries=Retry(
+                        total=4,
+                        backoff_factor=1,
+                        status_forcelist=(429, 500, 502, 503, 504),
+                    )
+                ),
+            )
+        try:
+            response = local.session.get(
+                WEXFORD_DATES_URL.format(application_id), timeout=120
+            )
+            response.raise_for_status()
+            return _parse_wexford_dates(response.json())
+        except (requests.RequestException, ValueError, TypeError):
+            return None
+
+    results = []
+    bar = progressbar.ProgressBar(max_value=len(records), prefix="Wexford dates: ")
+    with ThreadPoolExecutor(max_workers=WEXFORD_REQUEST_WORKERS) as executor:
+        futures = {executor.submit(get_dates, record): record for record in records}
+        for completed, future in enumerate(as_completed(futures), 1):
+            results.append((futures[future], future.result()))
+            bar.update(completed)
+    bar.finish()
+    return results
 
 
 class WexfordObject(Model):

@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 os.environ.setdefault(
     "PLANNING_PERMISSION_DATA_LOCATION", "/tmp/planning_permission_unittest"
@@ -9,7 +9,12 @@ os.environ.setdefault(
 from planning_permission.cork import CorkObject, cork_db
 from planning_permission import clare
 from planning_permission.donegal import DonegalObject, donegal_db
-from planning_permission.wexford import WexfordObject, wexford_db
+from planning_permission.wexford import (
+    WexfordObject,
+    _parse_wexford_dates,
+    _wexford_application_id,
+    wexford_db,
+)
 from planning_permission.kerry import KerryObject, kerry_db
 from planning_permission.wicklow import WicklowObject, wicklow_db
 from planning_permission.louth import LouthObject, louth_db
@@ -46,14 +51,23 @@ class AuthorityModelTest(unittest.TestCase):
             "FileNumber": "001009",
             "ApplicationType": "PERMISSION",
         }
-        detail = {
-            "ApplicationNumber": "001009",
-            "Decision": "CONDITIONAL",
-        }
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.text = """
+        <div id="planningApplicationDetails">
+          <div id="Details"><table>
+            <tr><th>File Number:</th><td>001009</td></tr>
+          </table></div>
+          <div id="Applicant"><table></table></div>
+          <div id="Development"><table></table></div>
+          <div id="Decision"><table>
+            <tr><th>Decision Type:</th><td>CONDITIONAL</td></tr>
+          </table></div>
+        </div>
+        """
         with (
-            patch.object(
-                clare, "arcgis_download", side_effect=[[site], [detail]]
-            ) as download,
+            patch.object(clare, "arcgis_download", return_value=[site]) as download,
+            patch.object(clare, "_mayo_request", return_value=response),
             patch.object(clare, "write_to_db") as write,
         ):
             clare.download_clare()
@@ -62,12 +76,6 @@ class AuthorityModelTest(unittest.TestCase):
             download.call_args_list,
             [
                 call(clare.CLARE_SITES_URL, skip_sort=True, prefix="Clare sites: "),
-                call(
-                    clare.CLARE_REGISTER_URL,
-                    skip_sort=True,
-                    where=clare.CLARE_WHERE,
-                    prefix="Clare details: ",
-                ),
             ],
         )
         self.assertEqual(write.call_args.args[2][0].decision, "CONDITIONAL")
@@ -307,6 +315,27 @@ class AuthorityModelTest(unittest.TestCase):
         self.assertEqual(saved.decision_date, 778204800000)
         self.assertEqual(saved.address, "'ROS RUA', BALLYGARRETT, CO. WEXFORD")
         self.assertEqual(saved.details_url, "https://example.test/wexford/10589")
+
+    def test_wexford_parses_agile_application_dates(self):
+        self.assertEqual(
+            _wexford_application_id(
+                "https://planning.agileapplications.ie/wexford/application-details/10589"
+            ),
+            "10589",
+        )
+        self.assertEqual(
+            _parse_wexford_dates(
+                {
+                    "receivedDate": "1994-12-19T00:00:00",
+                    "registrationDate": "1994-12-20T00:00:00",
+                    "decisionDate": "1995-02-03T00:00:00Z",
+                }
+            ),
+            {
+                "ReceivedDate": 787795200000,
+                "DecisionDate": 791769600000,
+            },
+        )
 
     def test_donegal_object_normalises_modern_arcgis_fields(self):
         donegal_db.recreate()

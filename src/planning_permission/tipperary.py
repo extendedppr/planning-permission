@@ -1,7 +1,12 @@
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, List
 
+import progressbar
+import requests
 from peewee import CharField, IntegerField, Model, SqliteDatabase, TextField
 
+from planning_permission.mayo import _mayo_date, _mayo_request, _parse_mayo_detail
 from planning_permission.settings import TIPPERARY_DB_LOCATION
 from planning_permission.utils import (
     clean_address_for_comparison,
@@ -12,34 +17,50 @@ from planning_permission.utils import (
 
 tipperary_database = SqliteDatabase(TIPPERARY_DB_LOCATION)
 TIPPERARY_URL = "https://services-eu1.arcgis.com/1cOXMgl48vVRhreT/arcgis/rest/services/TCC_PlanningPublicView/FeatureServer/0/query"
-TIPPERARY_REGISTER_URL = (
-    "https://services.arcgis.com/NzlPQPKn5QF9v2US/arcgis/rest/services/"
-    "IrishPlanningApplications/FeatureServer/0/query"
+TIPPERARY_DETAIL_URL = (
+    "https://eplanning.ie/ePlan/AppFileRefDetails/{}/27?localAuthorityId=27"
 )
-TIPPERARY_WHERE = "PlanningAuthority = 'Tipperary County Council'"
+TIPPERARY_REQUEST_WORKERS = 10
 
 
 def download_tipperary():
     records = arcgis_download(TIPPERARY_URL, skip_sort=True, prefix="Tipperary: ")
-    register = arcgis_download(
-        TIPPERARY_REGISTER_URL,
-        skip_sort=True,
-        where=TIPPERARY_WHERE,
-        prefix="Tipperary dates: ",
-    )
-    details_by_number = {
-        str(record.get("ApplicationNumber")).strip().casefold(): record
-        for record in register
-        if record.get("ApplicationNumber") not in (None, "")
-    }
-    objects = []
-    for record in records:
-        number = record.get("FileNumber")
-        details = (
-            details_by_number.get(str(number).strip().casefold()) if number else None
-        )
-        objects.append(TipperaryObject.parse(record, details))
+    enriched = get_tipperary_details(records)
+    objects = [TipperaryObject.parse(record, details) for record, details in enriched]
     write_to_db(tipperary_db, TipperaryObject, objects)
+
+
+def get_tipperary_details(records):
+    local = threading.local()
+
+    def get_application(number):
+        if not hasattr(local, "session"):
+            local.session = requests.Session()
+        details_url = TIPPERARY_DETAIL_URL.format(number)
+        try:
+            response = _mayo_request(local.session, "GET", details_url)
+            response.raise_for_status()
+        except requests.RequestException:
+            return None
+        return _parse_mayo_detail(
+            response.text,
+            details_url,
+            planning_authority="Tipperary County Council",
+        )
+
+    results = []
+    bar = progressbar.ProgressBar(max_value=len(records), prefix="Tipperary details: ")
+    with ThreadPoolExecutor(max_workers=TIPPERARY_REQUEST_WORKERS) as executor:
+        futures = {
+            executor.submit(get_application, record.get("FileNumber")): record
+            for record in records
+            if record.get("FileNumber")
+        }
+        for completed, future in enumerate(as_completed(futures), 1):
+            results.append((futures[future], future.result()))
+            bar.update(completed)
+    bar.finish()
+    return results
 
 
 class TipperaryObject(Model):
@@ -102,7 +123,7 @@ class TipperaryObject(Model):
             "description": data.get("development_descri"),
             "decision": data.get("DECISION"),
             "status": data.get("Status"),
-            "received_date": details.get("ReceivedDate"),
+            "received_date": _mayo_date(details.get("ReceivedDate")),
             "decision_date": data.get("decision_date") or details.get("DecisionDate"),
             "decision_manager_order_date": data.get("decision_m_o_date"),
             "appeal_date": data.get("Appeal_Date"),

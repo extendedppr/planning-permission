@@ -90,7 +90,9 @@ def _detail_fields(section):
     return fields
 
 
-def _parse_mayo_detail(document, details_url=None):
+def _parse_mayo_detail(
+    document, details_url=None, planning_authority="Mayo County Council"
+):
     soup = BeautifulSoup(document, "html.parser")
     if soup.select_one("#planningApplicationDetails") is None:
         return None
@@ -119,7 +121,7 @@ def _parse_mayo_detail(document, details_url=None):
         "ApplicantAddress": applicant.get("Applicant Address"),
         "DevelopmentAddress": development.get("Development Address") or "",
         "DevelopmentDescription": development.get("Development Description"),
-        "PlanningAuthority": "Mayo County Council",
+        "PlanningAuthority": planning_authority,
         "LinkAppDetails": details_url,
     }
 

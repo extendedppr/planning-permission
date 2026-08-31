@@ -1,5 +1,7 @@
 import math
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, List
 from urllib.parse import unquote_plus
 
@@ -8,16 +10,16 @@ import requests
 from peewee import CharField, IntegerField, Model, SqliteDatabase, TextField, chunked
 
 from planning_permission.settings import LIMERICK_DB_LOCATION, SLEEP_BETWEEN_REQUESTS
-from planning_permission.utils import arcgis_download, clean_address_for_comparison
+from planning_permission.mayo import _mayo_date, _mayo_request, _parse_mayo_detail
+from planning_permission.utils import clean_address_for_comparison
 
 
 limerick_database = SqliteDatabase(LIMERICK_DB_LOCATION)
 LIMERICK_BATCH_SIZE = 250
-LIMERICK_REGISTER_URL = (
-    "https://services.arcgis.com/NzlPQPKn5QF9v2US/arcgis/rest/services/"
-    "IrishPlanningApplications/FeatureServer/0/query"
+LIMERICK_DETAIL_URL = (
+    "https://eplanning.ie/ePlan/AppFileRefDetails/{}/17?localAuthorityId=17"
 )
-LIMERICK_REGISTER_WHERE = "PlanningAuthority = 'Limerick County Council'"
+LIMERICK_REQUEST_WORKERS = 10
 
 
 def limerick_request_data(start, length, draw):
@@ -122,24 +124,8 @@ def get_all_limerick_applications(session=None, batch_size=LIMERICK_BATCH_SIZE):
 
 def download_limerick():
     records = get_all_limerick_applications()
-    register = arcgis_download(
-        LIMERICK_REGISTER_URL,
-        skip_sort=True,
-        where=LIMERICK_REGISTER_WHERE,
-        prefix="Limerick dates: ",
-    )
-    details_by_number = {
-        str(record.get("ApplicationNumber")).strip().casefold(): record
-        for record in register
-        if record.get("ApplicationNumber") not in (None, "")
-    }
-    objects = []
-    for record in records:
-        number = record.get("file_number")
-        details = (
-            details_by_number.get(str(number).strip().casefold()) if number else None
-        )
-        objects.append(LimerickObject.parse(record, details))
+    enriched = get_limerick_details(records)
+    objects = [LimerickObject.parse(record, details) for record, details in enriched]
 
     batch_size = 500
     total_batches = math.ceil(len(objects) / batch_size)
@@ -153,6 +139,39 @@ def download_limerick():
             prefix="Limerick: ",
         ):
             LimerickObject.bulk_create(batch, batch_size=batch_size)
+
+
+def get_limerick_details(records):
+    local = threading.local()
+
+    def get_application(number):
+        if not hasattr(local, "session"):
+            local.session = requests.Session()
+        details_url = LIMERICK_DETAIL_URL.format(number)
+        try:
+            response = _mayo_request(local.session, "GET", details_url)
+            response.raise_for_status()
+        except requests.RequestException:
+            return None
+        return _parse_mayo_detail(
+            response.text,
+            details_url,
+            planning_authority="Limerick County Council",
+        )
+
+    results = []
+    bar = progressbar.ProgressBar(max_value=len(records), prefix="Limerick details: ")
+    with ThreadPoolExecutor(max_workers=LIMERICK_REQUEST_WORKERS) as executor:
+        futures = {
+            executor.submit(get_application, record.get("file_number")): record
+            for record in records
+            if record.get("file_number")
+        }
+        for completed, future in enumerate(as_completed(futures), 1):
+            results.append((futures[future], future.result()))
+            bar.update(completed)
+    bar.finish()
+    return results
 
 
 class LimerickObject(Model):
@@ -221,8 +240,8 @@ class LimerickObject(Model):
             parsed[key] = value
 
         parsed.setdefault("address", parsed.get("development_address") or "")
-        parsed["received_date"] = details.get("ReceivedDate")
-        parsed["decision_date"] = details.get("DecisionDate")
+        parsed["received_date"] = _mayo_date(details.get("ReceivedDate"))
+        parsed["decision_date"] = _mayo_date(details.get("DecisionDate"))
         return LimerickObject(**parsed)
 
 

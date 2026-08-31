@@ -219,6 +219,18 @@ class LocalPlanningDB:
         return list(query)
 
 
+def _merge_objects(existing, incoming):
+    """Fill gaps without letting a sparse overlapping layer erase details."""
+    for field in existing._meta.sorted_fields:
+        if field.primary_key or field.name in {"objid", "application_number"}:
+            continue
+        current = getattr(existing, field.name)
+        replacement = getattr(incoming, field.name)
+        if current in (None, "") and replacement not in (None, ""):
+            setattr(existing, field.name, replacement)
+    return existing
+
+
 def create_local_download(county, authority, database_path, urls):
     database = SqliteDatabase(database_path)
     model = type(
@@ -242,7 +254,11 @@ def create_local_download(county, authority, database_path, urls):
             ):
                 parsed = model.parse(record, authority)
                 if parsed is not None:
-                    by_number[parsed.application_number.casefold()] = parsed
+                    key = parsed.application_number.casefold()
+                    if key in by_number:
+                        _merge_objects(by_number[key], parsed)
+                    else:
+                        by_number[key] = parsed
         write_to_db(db, model, list(by_number.values()))
 
     download.__name__ = f"download_{county}"
