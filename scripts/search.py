@@ -3,7 +3,7 @@ import json
 
 from tabulate import tabulate
 
-from planning_permission.utils import clean_address_for_comparison, search
+from planning_permission.utils import PLANNING_COUNTIES, clean_address_for_comparison, search
 
 
 def address_substr_csv(value: str):
@@ -44,6 +44,13 @@ def main(argv=None):
         default=[],
     )
     parser.add_argument(
+        "--county",
+        action="append",
+        type=str.casefold,
+        choices=PLANNING_COUNTIES,
+        help="Only search this county (may be supplied more than once)",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="Do not truncate field values",
@@ -65,6 +72,7 @@ def main(argv=None):
     results_dict = search(
         args.address_substr_csv,
         args.exclude_address_substr_csv,
+        counties=args.county,
         include_all_features=args.all_features,
         truncate=not args.all and args.output == "table",
     )

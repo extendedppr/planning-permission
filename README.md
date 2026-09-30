@@ -27,3 +27,9 @@ poetry run download_planning_permission --county dublin
 ```bash
 poetry run search --address-substr-csv 9,mal --exclude-address-substr-csv south
 ```
+
+Limit a search to one or more counties by repeating `--county`:
+
+```bash
+poetry run search --address-substr-csv main,street --county dublin --county meath
+```

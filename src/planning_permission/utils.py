@@ -504,6 +504,35 @@ SEARCH_FIELDS_BY_SOURCE = {
 
 SEARCH_MAX_FIELD_LENGTH = 50
 
+PLANNING_COUNTIES = (
+    "dublin",
+    "cork",
+    "galway",
+    "kildare",
+    "meath",
+    "limerick",
+    "tipperary",
+    "donegal",
+    "wexford",
+    "kerry",
+    "wicklow",
+    "louth",
+    "mayo",
+    "clare",
+    "waterford",
+    "kilkenny",
+    "westmeath",
+    "laois",
+    "offaly",
+    "cavan",
+    "roscommon",
+    "sligo",
+    "monaghan",
+    "carlow",
+    "longford",
+    "leitrim",
+)
+
 
 def _planning_databases():
     """Load database instances lazily to avoid circular county imports."""
@@ -630,18 +659,25 @@ def _search_row(source, result, include_all_features, truncate):
 def search(
     address_substrs=None,
     exclude_address_substrs=None,
-    *,
+    counties=None,
     include_all_features=False,
     truncate=False,
     databases=None,
 ):
     included = _search_terms(address_substrs)
     excluded = _search_terms(exclude_address_substrs)
+    if isinstance(counties, str):
+        counties = [counties]
+    selected_counties = (
+        {county.casefold() for county in counties} if counties else None
+    )
     databases = _planning_databases() if databases is None else databases
 
     rows = []
     for database_config in databases:
         source, database, *models = database_config
+        if selected_counties is not None and source.casefold() not in selected_counties:
+            continue
         if models:
             _ensure_search_schema(database, models[0])
         for result in database.filter(
