@@ -2,7 +2,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from scripts import download_planning_permission
+from planning_permission.cli import download_planning_permission
 
 
 def test_downloads_selected_county_case_insensitively():

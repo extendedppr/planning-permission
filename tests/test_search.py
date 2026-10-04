@@ -11,7 +11,7 @@ os.environ.setdefault(
 from planning_permission.cork import CorkObject, cork_db
 from planning_permission.dublin import DublinObject, dublin_db
 from planning_permission.galway import GalwayObject, galway_db
-from scripts import search
+from planning_permission.cli import search
 
 
 LONG_DESCRIPTION = (
