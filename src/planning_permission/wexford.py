@@ -54,7 +54,7 @@ def download_wexford():
             council_by_number.get(str(number).strip().casefold()) if number else None
         )
         objects.append(WexfordObject.parse(record, details, council))
-    write_to_db(wexford_db, WexfordObject, objects)
+    return write_to_db(wexford_db, WexfordObject, objects)
 
 
 def _wexford_application_id(details_url):

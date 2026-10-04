@@ -63,4 +63,4 @@ def download_sligo():
         SligoObject.parse(record, "Sligo County Council")
         for record in get_all_sligo_applications()
     ]
-    write_to_db(sligo_db, SligoObject, [obj for obj in objects if obj])
+    return write_to_db(sligo_db, SligoObject, [obj for obj in objects if obj])

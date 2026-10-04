@@ -88,4 +88,4 @@ def download_leitrim():
         LeitrimObject.parse(record, "Leitrim County Council")
         for record in get_all_leitrim_applications()
     ]
-    write_to_db(leitrim_db, LeitrimObject, [obj for obj in objects if obj])
+    return write_to_db(leitrim_db, LeitrimObject, [obj for obj in objects if obj])

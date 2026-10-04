@@ -199,12 +199,19 @@ def get_all_mayo_applications(application_numbers=None):
                 records.append(record)
             bar.update(completed)
     bar.finish()
+    if len(records) != len(application_numbers):
+        raise ValueError(
+            f"Incomplete Mayo details: expected {len(application_numbers)}, got {len(records)}"
+        )
+    from planning_permission.telemetry import record_fetch
+
+    record_fetch(len(records))
     return records
 
 
 def download_mayo():
     objects = [MayoObject.parse(record) for record in get_all_mayo_applications()]
-    write_to_db(mayo_db, MayoObject, objects)
+    return write_to_db(mayo_db, MayoObject, objects)
 
 
 class MayoObject(Model):

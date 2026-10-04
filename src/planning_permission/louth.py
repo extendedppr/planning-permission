@@ -1,4 +1,4 @@
-import math
+from planning_permission.utils import validate_download
 import time
 from typing import Iterable, List
 
@@ -11,11 +11,10 @@ from peewee import (
     Model,
     SqliteDatabase,
     TextField,
-    chunked,
 )
 
 from planning_permission.settings import LOUTH_DB_LOCATION, SLEEP_BETWEEN_REQUESTS
-from planning_permission.utils import clean_address_for_comparison
+from planning_permission.utils import write_to_db, clean_address_for_comparison
 
 
 louth_database = SqliteDatabase(LOUTH_DB_LOCATION)
@@ -66,22 +65,13 @@ def get_all_louth_applications(session=None, batch_size=2000):
             break
         time.sleep(SLEEP_BETWEEN_REQUESTS)
     bar.finish()
+    validate_download(records, total, LOUTH_URL)
     return records
 
 
 def download_louth():
     objects = [LouthObject.parse(record) for record in get_all_louth_applications()]
-    louth_db.recreate()
-    batch_size = 500
-    total_batches = math.ceil(len(objects) / batch_size)
-    print(f"About to insert {len(objects)} objects into the database")
-    with louth_db.db.atomic():
-        for batch in progressbar.progressbar(
-            chunked(objects, batch_size),
-            max_value=total_batches,
-            prefix="Louth: ",
-        ):
-            LouthObject.bulk_create(batch, batch_size=batch_size)
+    return write_to_db(louth_db, LouthObject, objects)
 
 
 class LouthObject(Model):

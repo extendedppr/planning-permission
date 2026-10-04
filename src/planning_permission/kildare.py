@@ -1,4 +1,3 @@
-import math
 import string
 from typing import Iterable, List
 
@@ -10,19 +9,16 @@ from peewee import (
     CharField,
     SqliteDatabase,
     IntegrityError,
-    chunked,
 )
 
 from planning_permission.settings import KILDARE_DB_LOCATION
-from planning_permission.utils import clean_address_for_comparison, get
+from planning_permission.utils import write_to_db, clean_address_for_comparison, get
 
 kildare_database = SqliteDatabase(KILDARE_DB_LOCATION)
 
 
 def download_kildare():
     base_url = "https://webgeo.kildarecoco.ie/planningenquiry/Public/GetPlanningFileNameAddressResult?name=&address={letter}&devDesc=&startDate=&endDate="
-
-    kildare_db.drop_data()
 
     objects = []
     application_numbers = set()
@@ -39,17 +35,10 @@ def download_kildare():
                 objects.append(obj)
                 application_numbers.add(obj.application_number)
 
-    batch_size = 500
-    total_batches = math.ceil(len(objects) / batch_size)
-    print(f"About to insert {len(objects)} objects into the database")
+    from planning_permission.telemetry import record_fetch
 
-    with kildare_db.db.atomic():
-        for batch in progressbar.progressbar(
-            chunked(objects, batch_size),
-            max_value=total_batches,
-            prefix="Kildare: ",
-        ):
-            KildareObject.bulk_create(batch, batch_size=batch_size)
+    record_fetch(len(objects))
+    return write_to_db(kildare_db, KildareObject, objects)
 
 
 class KildareObject(Model):

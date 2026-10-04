@@ -71,7 +71,7 @@ def download_clare():
         ClareObject.parse(site, details)
         for site, details in get_all_clare_applications()
     ]
-    write_to_db(clare_db, ClareObject, objects)
+    return write_to_db(clare_db, ClareObject, objects)
 
 
 class ClareObject(Model):

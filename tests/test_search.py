@@ -100,7 +100,7 @@ class SearchTest(unittest.TestCase):
         cork = next(row for row in rows if row["source"] == "cork")
         self.assertEqual(cork["description"], LONG_DESCRIPTION)
 
-    def test_default_search_truncates_long_fields_and_hides_more_info(self):
+    def test_default_search_truncates_long_fields_and_exposes_source_url(self):
         self.seed_search_rows()
 
         output = self.run_search("--address-substr-csv", "13,grand canal")
@@ -108,8 +108,8 @@ class SearchTest(unittest.TestCase):
         self.assertIn("Build extension with a very long description that ...", output)
         self.assertNotIn("should clearly exceed fifty characters", output)
         self.assertNotIn("more_info", output)
-        self.assertNotIn("https://example.test/cork", output)
-        self.assertNotIn("https://example.test/galway", output)
+        self.assertIn("https://example.test/cork", output)
+        self.assertIn("https://example.test/galway", output)
 
     def test_all_disables_value_truncation(self):
         self.seed_search_rows()

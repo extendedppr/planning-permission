@@ -21,7 +21,7 @@ def download_kerry():
         KerryObject.parse(record)
         for record in arcgis_download(KERRY_URL, skip_sort=True, prefix="Kerry: ")
     ]
-    write_to_db(kerry_db, KerryObject, objects)
+    return write_to_db(kerry_db, KerryObject, objects)
 
 
 class KerryObject(Model):

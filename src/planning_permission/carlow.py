@@ -65,4 +65,4 @@ def download_carlow():
         CarlowObject.parse(record, "Carlow County Council")
         for record in get_all_carlow_applications()
     ]
-    write_to_db(carlow_db, CarlowObject, [obj for obj in objects if obj])
+    return write_to_db(carlow_db, CarlowObject, [obj for obj in objects if obj])

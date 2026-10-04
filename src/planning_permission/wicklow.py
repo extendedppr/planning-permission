@@ -20,7 +20,7 @@ def download_wicklow():
         WicklowObject.parse(record)
         for record in arcgis_download(WICKLOW_URL, skip_sort=True, prefix="Wicklow: ")
     ]
-    write_to_db(wicklow_db, WicklowObject, objects)
+    return write_to_db(wicklow_db, WicklowObject, objects)
 
 
 class WicklowObject(Model):

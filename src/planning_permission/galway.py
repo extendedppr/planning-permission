@@ -1,3 +1,4 @@
+from planning_permission.utils import validate_download
 import re
 from typing import Iterable, List
 
@@ -101,6 +102,7 @@ def _get_galway_layer(url, session, batch_size, prefix):
         if payload.get("exceededTransferLimit") is False:
             break
     bar.finish()
+    validate_download(records, total, url)
     return records
 
 
@@ -161,7 +163,7 @@ def parse_galway_application(data):
 def download_galway():
     records = get_all_galway_applications()
     objects = [parse_galway_application(record) for record in records]
-    write_to_db(galway_db, GalwayObject, objects)
+    return write_to_db(galway_db, GalwayObject, objects)
 
 
 class GalwayObject(Model):

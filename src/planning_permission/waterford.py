@@ -18,7 +18,7 @@ def download_waterford():
             WATERFORD_URL, skip_sort=True, prefix="Waterford: "
         )
     ]
-    write_to_db(waterford_db, WaterfordObject, objects)
+    return write_to_db(waterford_db, WaterfordObject, objects)
 
 
 class WaterfordObject(Model):

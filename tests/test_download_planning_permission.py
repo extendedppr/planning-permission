@@ -32,5 +32,21 @@ def test_downloads_every_county_in_order():
 
 
 def test_unknown_county_is_rejected():
-    with pytest.raises(KeyError, match="unknown"):
+    with pytest.raises(SystemExit, match="2"):
         download_planning_permission.main(["--county", "unknown"])
+
+
+def test_failure_continues_other_counties(capsys):
+    failed = Mock(side_effect=RuntimeError("source unavailable"))
+    good = Mock(return_value={"records_fetched": 3, "records_saved": 3})
+    with patch.dict(
+        download_planning_permission.COUNTY_FUNC_MAP,
+        {"dublin": failed, "cork": good},
+        clear=True,
+    ):
+        result = download_planning_permission.main([])
+    assert result == 1
+    good.assert_called_once()
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "dublin: RuntimeError: source unavailable" in output.err

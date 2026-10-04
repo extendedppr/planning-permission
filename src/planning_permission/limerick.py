@@ -1,4 +1,3 @@
-import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -7,11 +6,11 @@ from urllib.parse import unquote_plus
 
 import progressbar
 import requests
-from peewee import CharField, IntegerField, Model, SqliteDatabase, TextField, chunked
+from peewee import CharField, IntegerField, Model, SqliteDatabase, TextField
 
 from planning_permission.settings import LIMERICK_DB_LOCATION, SLEEP_BETWEEN_REQUESTS
 from planning_permission.mayo import _mayo_date, _mayo_request, _parse_mayo_detail
-from planning_permission.utils import clean_address_for_comparison
+from planning_permission.utils import write_to_db, clean_address_for_comparison
 
 
 limerick_database = SqliteDatabase(LIMERICK_DB_LOCATION)
@@ -119,6 +118,11 @@ def get_all_limerick_applications(session=None, batch_size=LIMERICK_BATCH_SIZE):
     if bar is not None:
         bar.finish()
 
+    if start != total:
+        raise ValueError(f"Incomplete Limerick download: expected {total}, got {start}")
+    from planning_permission.telemetry import record_fetch
+
+    record_fetch(start)
     return list(records_by_number.values())
 
 
@@ -127,18 +131,7 @@ def download_limerick():
     enriched = get_limerick_details(records)
     objects = [LimerickObject.parse(record, details) for record, details in enriched]
 
-    batch_size = 500
-    total_batches = math.ceil(len(objects) / batch_size)
-    print(f"About to insert {len(objects)} objects into the database")
-
-    limerick_db.recreate()
-    with limerick_db.db.atomic():
-        for batch in progressbar.progressbar(
-            chunked(objects, batch_size),
-            max_value=total_batches,
-            prefix="Limerick: ",
-        ):
-            LimerickObject.bulk_create(batch, batch_size=batch_size)
+    return write_to_db(limerick_db, LimerickObject, objects)
 
 
 def get_limerick_details(records):

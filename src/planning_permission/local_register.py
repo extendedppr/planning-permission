@@ -259,7 +259,7 @@ def create_local_download(county, authority, database_path, urls):
                         _merge_objects(by_number[key], parsed)
                     else:
                         by_number[key] = parsed
-        write_to_db(db, model, list(by_number.values()))
+        return write_to_db(db, model, list(by_number.values()))
 
     download.__name__ = f"download_{county}"
     return model, db, download

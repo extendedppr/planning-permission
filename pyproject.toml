@@ -1,6 +1,6 @@
 [tool.poetry]
-name = "planning permission"
-version = "0.0.6"
+name = "planning-permission"
+version = "0.0.7"
 description = ""
 authors = ["ExtendedPPR <extendedppr@gmail.com>"]
 readme = "README.md"
@@ -28,8 +28,8 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-download_planning_permission = "scripts.download_planning_permission:main"
-search = "scripts.search:main"
+download_planning_permission = "planning_permission.cli.download_planning_permission:main"
+search = "planning_permission.cli.search:main"
 
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]

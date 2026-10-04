@@ -1,9 +1,16 @@
 import argparse
 import json
+import csv
+import sys
+from datetime import date
 
 from tabulate import tabulate
 
-from planning_permission.utils import PLANNING_COUNTIES, clean_address_for_comparison, search
+from planning_permission.utils import (
+    PLANNING_COUNTIES,
+    clean_address_for_comparison,
+    search,
+)
 
 
 def address_substr_csv(value: str):
@@ -28,7 +35,9 @@ def align_rows(rows, headers):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Get all stats around a point")
+    parser = argparse.ArgumentParser(
+        description="Search downloaded Irish planning applications"
+    )
     parser.add_argument(
         "--address-substr-csv",
         dest="address_substr_csv",
@@ -62,23 +71,59 @@ def main(argv=None):
     )
     parser.add_argument(
         "--output",
-        choices=("table", "json"),
+        choices=("table", "json", "csv"),
         default="table",
         help="Output format",
     )
 
+    parser.add_argument(
+        "--reference", help="Exact application reference (case insensitive)"
+    )
+    parser.add_argument(
+        "--received-from",
+        type=date.fromisoformat,
+        help="Inclusive received date, YYYY-MM-DD",
+    )
+    parser.add_argument(
+        "--received-to",
+        type=date.fromisoformat,
+        help="Inclusive received date, YYYY-MM-DD",
+    )
+    parser.add_argument(
+        "--decision", help="Decision text contains this value (case insensitive)"
+    )
+    parser.add_argument(
+        "--status", help="Status text contains this value (case insensitive)"
+    )
     args = parser.parse_args(argv)
+    if (
+        args.received_from
+        and args.received_to
+        and args.received_from > args.received_to
+    ):
+        parser.error("--received-from must not be after --received-to")
 
     results_dict = search(
         args.address_substr_csv,
         args.exclude_address_substr_csv,
         counties=args.county,
+        reference=args.reference,
+        received_from=args.received_from.isoformat() if args.received_from else None,
+        received_to=args.received_to.isoformat() if args.received_to else None,
+        decision=args.decision,
+        status=args.status,
         include_all_features=args.all_features,
         truncate=not args.all and args.output == "table",
     )
 
     if args.output == "json":
         print(json.dumps(results_dict, indent=2))
+    elif args.output == "csv":
+        headers = get_headers(results_dict)
+        if headers:
+            writer = csv.DictWriter(sys.stdout, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(results_dict)
     else:
         headers = get_headers(results_dict)
         print(

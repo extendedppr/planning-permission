@@ -1,13 +1,13 @@
-import math
+from planning_permission.utils import validate_download
 import time
 from typing import Iterable, List
 
 import progressbar
 import requests
-from peewee import CharField, IntegerField, Model, SqliteDatabase, TextField, chunked
+from peewee import CharField, IntegerField, Model, SqliteDatabase, TextField
 
 from planning_permission.settings import DONEGAL_DB_LOCATION, SLEEP_BETWEEN_REQUESTS
-from planning_permission.utils import clean_address_for_comparison
+from planning_permission.utils import write_to_db, clean_address_for_comparison
 
 
 donegal_database = SqliteDatabase(DONEGAL_DB_LOCATION)
@@ -56,6 +56,7 @@ def get_all_donegal_applications(session=None, layers=DONEGAL_LAYERS, batch_size
 
     for (source_layer, url), layer_count in zip(layers, counts):
         offset = 0
+        layer_start = len(records)
         while offset < layer_count:
             response = session.get(
                 url,
@@ -86,6 +87,8 @@ def get_all_donegal_applications(session=None, layers=DONEGAL_LAYERS, batch_size
                 break
             time.sleep(SLEEP_BETWEEN_REQUESTS)
 
+        validate_download(records[layer_start:], layer_count, url)
+
     bar.finish()
     return records
 
@@ -94,17 +97,7 @@ def download_donegal():
     records = get_all_donegal_applications()
     objects = [DonegalObject.parse(record) for record in records]
 
-    donegal_db.recreate()
-    batch_size = 500
-    total_batches = math.ceil(len(objects) / batch_size)
-    print(f"About to insert {len(objects)} objects into the database")
-    with donegal_db.db.atomic():
-        for batch in progressbar.progressbar(
-            chunked(objects, batch_size),
-            max_value=total_batches,
-            prefix="Donegal: ",
-        ):
-            DonegalObject.bulk_create(batch, batch_size=batch_size)
+    return write_to_db(donegal_db, DonegalObject, objects)
 
 
 class DonegalObject(Model):

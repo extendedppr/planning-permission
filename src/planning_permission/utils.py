@@ -1,4 +1,6 @@
 import math
+from planning_permission.registry import COUNTIES as PLANNING_COUNTIES  # noqa: F401
+from planning_permission.registry import REGISTRY
 import re
 from datetime import datetime
 from functools import lru_cache
@@ -10,7 +12,6 @@ import progressbar
 import requests
 import backoff
 import ujson
-from peewee import chunked
 from playhouse.migrate import SqliteMigrator, migrate
 
 from planning_permission.settings import (
@@ -480,116 +481,14 @@ def normalise(properties, field_map, date_fields=None):
     return out
 
 
-SEARCH_DEFAULT_FIELDS = (
-    ("application_number", ("application_number",)),
-    ("status", ("application_status", "status")),
-    ("type", ("application_type",)),
-    ("decision", ("decision", "decision_code")),
-    ("received", ("received_date", "registration_date")),
-    ("decision_date", ("decision_date",)),
-    ("description", ("development_description", "description")),
-)
-
-SEARCH_FIELDS_BY_SOURCE = {
-    "dublin": (
-        ("application_number", ("application_reference",)),
-        ("status", ("status_description",)),
-        ("type", ("application_type",)),
-        ("decision", ("decision_text",)),
-        ("received", ("received_date", "registration_date")),
-        ("decision_date", ("decision_date",)),
-        ("description", ("proposal",)),
-    ),
-}
-
 SEARCH_MAX_FIELD_LENGTH = 50
 
-PLANNING_COUNTIES = (
-    "dublin",
-    "cork",
-    "galway",
-    "kildare",
-    "meath",
-    "limerick",
-    "tipperary",
-    "donegal",
-    "wexford",
-    "kerry",
-    "wicklow",
-    "louth",
-    "mayo",
-    "clare",
-    "waterford",
-    "kilkenny",
-    "westmeath",
-    "laois",
-    "offaly",
-    "cavan",
-    "roscommon",
-    "sligo",
-    "monaghan",
-    "carlow",
-    "longford",
-    "leitrim",
-)
 
-
-def _planning_databases():
-    """Load database instances lazily to avoid circular county imports."""
-    from planning_permission.clare import ClareObject, clare_db
-    from planning_permission.cork import CorkObject, cork_db
-    from planning_permission.donegal import DonegalObject, donegal_db
-    from planning_permission.dublin import DublinObject, dublin_db
-    from planning_permission.galway import GalwayObject, galway_db
-    from planning_permission.kerry import KerryObject, kerry_db
-    from planning_permission.kildare import KildareObject, kildare_db
-    from planning_permission.limerick import LimerickObject, limerick_db
-    from planning_permission.louth import LouthObject, louth_db
-    from planning_permission.mayo import MayoObject, mayo_db
-    from planning_permission.meath import MeathObject, meath_db
-    from planning_permission.tipperary import TipperaryObject, tipperary_db
-    from planning_permission.waterford import WaterfordObject, waterford_db
-    from planning_permission.wexford import WexfordObject, wexford_db
-    from planning_permission.wicklow import WicklowObject, wicklow_db
-    from planning_permission.carlow import CarlowObject, carlow_db
-    from planning_permission.cavan import CavanObject, cavan_db
-    from planning_permission.kilkenny import KilkennyObject, kilkenny_db
-    from planning_permission.laois import LaoisObject, laois_db
-    from planning_permission.leitrim import LeitrimObject, leitrim_db
-    from planning_permission.longford import LongfordObject, longford_db
-    from planning_permission.monaghan import MonaghanObject, monaghan_db
-    from planning_permission.offaly import OffalyObject, offaly_db
-    from planning_permission.roscommon import RoscommonObject, roscommon_db
-    from planning_permission.sligo import SligoObject, sligo_db
-    from planning_permission.westmeath import WestmeathObject, westmeath_db
-
+def _planning_databases(counties=None):
     return (
-        ("dublin", dublin_db, DublinObject),
-        ("cork", cork_db, CorkObject),
-        ("galway", galway_db, GalwayObject),
-        ("kildare", kildare_db, KildareObject),
-        ("meath", meath_db, MeathObject),
-        ("limerick", limerick_db, LimerickObject),
-        ("tipperary", tipperary_db, TipperaryObject),
-        ("donegal", donegal_db, DonegalObject),
-        ("wexford", wexford_db, WexfordObject),
-        ("kerry", kerry_db, KerryObject),
-        ("wicklow", wicklow_db, WicklowObject),
-        ("louth", louth_db, LouthObject),
-        ("mayo", mayo_db, MayoObject),
-        ("clare", clare_db, ClareObject),
-        ("waterford", waterford_db, WaterfordObject),
-        ("kilkenny", kilkenny_db, KilkennyObject),
-        ("westmeath", westmeath_db, WestmeathObject),
-        ("laois", laois_db, LaoisObject),
-        ("offaly", offaly_db, OffalyObject),
-        ("cavan", cavan_db, CavanObject),
-        ("roscommon", roscommon_db, RoscommonObject),
-        ("sligo", sligo_db, SligoObject),
-        ("monaghan", monaghan_db, MonaghanObject),
-        ("carlow", carlow_db, CarlowObject),
-        ("longford", longford_db, LongfordObject),
-        ("leitrim", leitrim_db, LeitrimObject),
+        (name, entry.database, entry.model)
+        for name, entry in REGISTRY.items()
+        if counties is None or name in counties
     )
 
 
@@ -638,22 +537,20 @@ def _first_search_value(result, model_fields):
 
 
 def _search_row(source, result, include_all_features, truncate):
+    from planning_permission.schema import normalise_record
+
     if include_all_features:
         row = {"source": source}
         for field in result._meta.sorted_fields:
             row[field.name] = _search_value(getattr(result, field.name), truncate)
         return row
-
-    row = {
+    return {
         "source": source,
-        "address": _search_value(getattr(result, "address", None), truncate),
+        **{
+            key: _search_value(value, truncate)
+            for key, value in normalise_record(result).items()
+        },
     }
-    fields = SEARCH_FIELDS_BY_SOURCE.get(source, SEARCH_DEFAULT_FIELDS)
-    for output_field, model_fields in fields:
-        row[output_field] = _search_value(
-            _first_search_value(result, model_fields), truncate
-        )
-    return row
 
 
 def search(
@@ -663,15 +560,25 @@ def search(
     include_all_features=False,
     truncate=False,
     databases=None,
+    reference=None,
+    received_from=None,
+    received_to=None,
+    decision=None,
+    status=None,
 ):
+    from planning_permission.schema import normalise_record
+    from planning_permission.refresh import read_metadata
+
+    if received_from and received_to and received_from > received_to:
+        raise ValueError("received_from must not be after received_to")
     included = _search_terms(address_substrs)
     excluded = _search_terms(exclude_address_substrs)
     if isinstance(counties, str):
         counties = [counties]
-    selected_counties = (
-        {county.casefold() for county in counties} if counties else None
+    selected_counties = {county.casefold() for county in counties} if counties else None
+    databases = (
+        _planning_databases(selected_counties) if databases is None else databases
     )
-    databases = _planning_databases() if databases is None else databases
 
     rows = []
     for database_config in databases:
@@ -680,12 +587,38 @@ def search(
             continue
         if models:
             _ensure_search_schema(database, models[0])
+        metadata = read_metadata(database.db) if hasattr(database, "db") else {}
         for result in database.filter(
             address_substrs=included,
             exclude_address_substrs=excluded,
             partial=True,
         ):
-            rows.append(_search_row(source, result, include_all_features, truncate))
+            canonical = normalise_record(result)
+            if (
+                reference
+                and str(canonical["application_number"] or "").casefold()
+                != reference.casefold()
+            ):
+                continue
+            if (
+                decision
+                and decision.casefold()
+                not in str(canonical["decision"] or "").casefold()
+            ):
+                continue
+            if (
+                status
+                and status.casefold() not in str(canonical["status"] or "").casefold()
+            ):
+                continue
+            received = canonical["received"]
+            if received_from and (not received or received < received_from):
+                continue
+            if received_to and (not received or received > received_to):
+                continue
+            row = _search_row(source, result, include_all_features, truncate)
+            row["last_updated"] = metadata.get("last_success", "unknown")
+            rows.append(row)
     return rows
 
 
@@ -712,6 +645,33 @@ def post(url, data, headers=None, session=None):
     response = client.post(url, data=data, headers=headers, timeout=60)
     response.raise_for_status()
     return response
+
+
+def validate_download(records, expected, source):
+    if len(records) != expected:
+        raise ValueError(
+            f"Incomplete download from {source}: expected {expected}, got {len(records)}"
+        )
+    # Validate page identity where the source supplies stable feature IDs.
+    ids = []
+    for record in records:
+        identity = next(
+            (
+                (key, record[key])
+                for key in ("OBJECTID", "OBJECTID_1", "FID")
+                if record.get(key) is not None
+            ),
+            None,
+        )
+        if identity is None:
+            ids = []
+            break
+        ids.append(identity)
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"Duplicate feature IDs in download from {source}")
+    from planning_permission.telemetry import record_fetch
+
+    record_fetch(len(records))
 
 
 def arcgis_get_count(url, session, where="1=1"):
@@ -765,7 +725,7 @@ def arcgis_get_results(
             break
         sleep(SLEEP_BETWEEN_REQUESTS)
     bar.finish()
-
+    validate_download(records, total, url)
     return records
 
 
@@ -774,16 +734,9 @@ def calc_batches(objects):
 
 
 def write_to_db(db, obj, objects):
-    print(f"About to insert {len(objects)} objects into the database")
-    prefix = f"{obj.__name__.removesuffix('Object')}: "
-    db.recreate()
-    with db.db.atomic():
-        for batch in progressbar.progressbar(
-            chunked(objects, INSERT_BATCH_SIZE),
-            max_value=calc_batches(objects),
-            prefix=prefix,
-        ):
-            obj.bulk_create(batch, batch_size=INSERT_BATCH_SIZE)
+    from planning_permission.refresh import replace_dataset
+
+    return replace_dataset(db.db, obj, objects, INSERT_BATCH_SIZE)
 
 
 def arcgis_download(URL, skip_sort=False, where="1=1", prefix=""):

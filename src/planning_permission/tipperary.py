@@ -27,7 +27,7 @@ def download_tipperary():
     records = arcgis_download(TIPPERARY_URL, skip_sort=True, prefix="Tipperary: ")
     enriched = get_tipperary_details(records)
     objects = [TipperaryObject.parse(record, details) for record, details in enriched]
-    write_to_db(tipperary_db, TipperaryObject, objects)
+    return write_to_db(tipperary_db, TipperaryObject, objects)
 
 
 def get_tipperary_details(records):

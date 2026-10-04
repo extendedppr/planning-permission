@@ -15,7 +15,11 @@ from peewee import (
 )
 
 from planning_permission.settings import CORK_DB_LOCATION, SLEEP_BETWEEN_REQUESTS
-from planning_permission.utils import clean_address_for_comparison, write_to_db
+from planning_permission.utils import (
+    clean_address_for_comparison,
+    write_to_db,
+    validate_download,
+)
 
 CORK_CITY_URL = (
     "https://services-eu1.arcgis.com/f0ZQOHXBIeLonX0V/arcgis/rest/services/"
@@ -45,9 +49,16 @@ def download_cork():
     objects = []
 
     for where in progressbar.progressbar(CORK_CITY_YEAR_FILTERS, prefix="Cork City: "):
+        count_response = requests.get(
+            CORK_CITY_URL,
+            params={"f": "json", "where": where, "returnCountOnly": "true"},
+            timeout=CORK_REQUEST_TIMEOUT,
+        )
+        count_response.raise_for_status()
+        expected = count_response.json()["count"]
         features = []
         offset = 0
-        while True:
+        while offset < expected:
             response = requests.get(
                 CORK_CITY_URL,
                 params={
@@ -66,11 +77,17 @@ def download_cork():
             )
             response.raise_for_status()
             data = response.json()
+            if "error" in data:
+                raise RuntimeError(data["error"])
             page = data.get("features", [])
             features.extend(page)
             offset += len(page)
             if not page or data.get("exceededTransferLimit") is False:
                 break
+
+        validate_download(
+            [item["attributes"] for item in features], expected, CORK_CITY_URL
+        )
 
         for item in features:
             attrs = item["attributes"]
@@ -136,7 +153,8 @@ def download_cork():
     county_bar.start()
 
     offset = 0
-    while True:
+    county_records = []
+    while offset < county_total:
         response = requests.get(
             CORK_COUNTY_URL,
             params={
@@ -152,7 +170,10 @@ def download_cork():
         )
         response.raise_for_status()
         data = response.json()
+        if "error" in data:
+            raise RuntimeError(data["error"])
         page = data.get("features", [])
+        county_records.extend(item["attributes"] for item in page)
         for item in page:
             attrs = item["attributes"]
             applicant_name = " ".join(
@@ -199,8 +220,9 @@ def download_cork():
             break
         time.sleep(SLEEP_BETWEEN_REQUESTS)
     county_bar.finish()
+    validate_download(county_records, county_total, CORK_COUNTY_URL)
 
-    write_to_db(cork_db, CorkObject, objects)
+    return write_to_db(cork_db, CorkObject, objects)
 
 
 class CorkObject(Model):

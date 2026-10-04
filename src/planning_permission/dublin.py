@@ -393,13 +393,17 @@ def get_all_dublin_applications(session=None, search_terms=None):
 
 
 def download_dublin():
+    records = get_all_dublin_applications()
+    from planning_permission.telemetry import record_fetch
+
+    record_fetch(len(records))
     objects = [
         obj
-        for record in get_all_dublin_applications()
+        for record in records
         if (obj := parse_dublin_application(record)) is not None
     ]
 
-    write_to_db(dublin_db, DublinObject, objects)
+    return write_to_db(dublin_db, DublinObject, objects)
 
 
 class DublinObject(Model):

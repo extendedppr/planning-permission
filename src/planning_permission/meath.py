@@ -30,7 +30,7 @@ def download_meath():
         MeathObject.parse(record)
         for record in arcgis_download(MEATH_URL, skip_sort=True, prefix="Meath: ")
     ]
-    write_to_db(meath_db, MeathObject, objects)
+    return write_to_db(meath_db, MeathObject, objects)
 
 
 class MeathObject(Model):
